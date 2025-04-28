@@ -17,8 +17,8 @@ This is a Streamlit application that helps users find suitable neighborhoods bas
 ### Running with Docker
 1. Clone the repository:
    ```sh
-   git clone https://github.com/your-repo/neighborhood-matchmaker.git
-   cd neighborhood-matchmaker
+   git clone https://github.com/dneish2/HoodMatcher.git
+   cd HoodMatcher
    ```
 2. Build the Docker image:
    ```sh
