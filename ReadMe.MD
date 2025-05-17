@@ -154,23 +154,6 @@ Neighborhood data should follow a similar format to housing-data-slim-2024.csv, 
 
 ⸻
 
-## File Structure
-
-├── NeighborhoodMatcher.py
-├── data/
-│   ├── housing-data-slim-2024.csv
-│   └── architecture.mmd
-├── output/
-│   ├── form_input.png
-│   ├── home_prices.png
-│   ├── llm_output.json
-│   └── neighborhood.png
-├── Dockerfile
-├── requirements.txt
-└── application_default_credentials.json
-
-⸻
-
 ## API Configuration
 
 To run the application successfully, you will need the following API credentials:
@@ -198,8 +181,6 @@ Initially used fuzzy string matching (e.g., difflib) which broke on inconsistent
 Solution:
 Adopted a full RAG setup using OpenAI embeddings + FAISS to enable semantic search over RegionName, allowing the LLM output to match reliably with the structured price data.
 
-⸻
-
 2. Zillow Dataset Integration — Managing Local Memory Constraints
 
 Problem:
@@ -207,8 +188,6 @@ Full Zillow data caused memory crashes on 8GB local M1 machine.
 
 Solution:
 Downsampled and scoped the data to 2024+. Migrated dataset to BigQuery for file storage and modification.
-
-⸻
 
 3. Imagen API Integration — Credential and Config Management
 
