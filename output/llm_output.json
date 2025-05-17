@@ -1,0 +1,16 @@
+{
+    "recommendations": [
+      {
+        "neighborhood": "Webster Groves",
+        "explanation": "Webster Groves might be just what you're looking for. The neighborhood is home to the beautiful Blackburn Park where you could take those long walks. For your amenities, the Webster Groves Farmers Market, located in the heart of the town at the intersection of Big Bend Blvd and South Old Orchard Ave, offers an assortment of fresh local produce every Thursday. The Webster Groves Public Library on East Lockwood Avenue offers a multitude of resources, and the Webster Groves Recreation Complex on East Glendale Road is a perfect community center with a variety of programs for residents of all ages."
+      },
+      {
+        "neighborhood": "Clayton",
+        "explanation": "If you're into energetic, urban environments, you may prefer Clayton - a bustling neighborhood filled with parks like Shaw Park for your leisurely walks. The Clayton Farmers Market, held every Saturday at the corner of Hanley and Forsyth, is where you’ll find fresh, local produce. Additionally, the Clayton Community Library on Maryland Ave offers a wealth of knowledge while The Center of Clayton community center on Gay Avenue provides many recreational activities. All these locations are within walking distance."
+      },
+      {
+        "neighborhood": "Kirkwood",
+        "explanation": "Kirkwood could be a great fit for you. Walker Lake in Kirkwood Park is an excellent spot for a pleasant jaunt. The Kirkwood Farmers Market on East Argonne Drive has been providing locally sourced goods to residents since 1976. Kirkwood Public Library on East Jefferson Avenue houses an extensive collection for your literary interests, and the Kirkwood Community Center on South Geyer Road offers recreational and wellness activities all within a friendly walk."
+      }
+    ]
+  }

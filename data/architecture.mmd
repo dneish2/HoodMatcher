@@ -1,0 +1,21 @@
+flowchart TD
+    A[User Input] --> B[Streamlit UI]
+    B --> C[GPT-4 Prompt + System Instructions]
+    C --> D[Neighborhood Recommendations]
+    D -->|Extracted names| E[FAISS Vector Search]
+    E --> F[Best-Match Neighborhood Records]
+    F --> G[RAG: Retrieve Price Trends from CSV]
+    G --> H1[Display Line Chart]
+
+    D --> H2[Display Explanations]
+    B --> I[Imagen API ]
+    I --> J[Generated Neighborhood Image]
+
+    H1 --> K[Streamlit Output]
+    H2 --> K
+    J --> K
+
+    %% Color styling
+    style A fill:#f9d976,stroke:#333,stroke-width:1px,color:#000,font-weight:bold
+    style I fill:#cce5ff,stroke:#333,stroke-width:1px,color:#000
+    style K fill:#a6e3a1,stroke:#333,stroke-width:1px,color:#000,font-weight:bold

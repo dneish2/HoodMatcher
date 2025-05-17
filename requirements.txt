@@ -1,11 +1,11 @@
 streamlit
 openai
-google-auth
-google-auth-oauthlib
-google-auth-httplib2
-google-api-python-client
-requests
 pandas
+matplotlib
 Pillow
 tenacity
+python-dotenv
+numpy
+faiss-cpu
+google-cloud-aiplatform
 python-dotenv

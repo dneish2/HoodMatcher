@@ -1,320 +1,255 @@
 import os
 import re
-import difflib
-import requests
 import json
-import base64
+import ast
 import pandas as pd
+import matplotlib.pyplot as plt
 import streamlit as st
-from io import BytesIO
-from PIL import Image
 from dotenv import load_dotenv
 from tenacity import retry, stop_after_attempt, wait_fixed
-from openai import OpenAI  # OpenAI's latest SDK
-
-# For Imagen on Vertex AI
+from openai import OpenAI
+import numpy as np
+import faiss
+from PIL import Image
 import vertexai
 from vertexai.preview.vision_models import ImageGenerationModel
+from io import BytesIO
+from matplotlib.ticker import FuncFormatter
 
 # -------------------------------
-# Step 1: Load Environment Variables
+# Load Environment Variables
 # -------------------------------
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-IMAGE_MODEL = os.getenv("IMAGE_MODEL", "imagen")  # Options: "gemini" or "imagen"
-PROJECT_ID = os.getenv("PROJECT_ID")  # Required for Imagen
-LOCATION = os.getenv("LOCATION", "us-central1")  # Optional; defaults to "us-central1"
+IMAGE_MODEL = os.getenv("IMAGE_MODEL", "imagen")
+PROJECT_ID = os.getenv("PROJECT_ID")
+LOCATION = os.getenv("LOCATION", "us-central1")
 
-client = OpenAI(api_key=OPENAI_API_KEY)
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = os.path.join(os.getcwd(), "application_default_credentials.json")
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 # -------------------------------
-# Step 2: Define Helper Functions
+# Helper: pricing timeseries
 # -------------------------------
-def normalize(text: str) -> str:
-    """
-    Normalize a string by converting to lowercase and removing all non-alphanumeric characters.
-    """
-    return re.sub(r'[^a-z0-9]', '', text.lower())
+def normalize_key(text: str) -> str:
+    """Lowercase, strip non-alphanumerics so 'St. Louis' → 'stlouis'."""
+    return re.sub(r'[^a-z0-9]', '', text.lower() or "")
 
-def normalize_city(text: str) -> str:
-    """
-    Custom normalization for city names.
-    Converts abbreviations like "st" to "saint" when appropriate.
-    """
-    text = text.lower().strip()
-    text = re.sub(r'[^a-z0-9]', '', text)
-    # If the text starts with "st" but not "saint", convert it.
-    if text.startswith("st") and not text.startswith("saint"):
-        text = "saint" + text[2:]
-    return text
-
-def get_valid_neighborhood(lm_output: str, valid_names: list) -> str:
-    """
-    Use fuzzy matching on normalized names to find the closest valid neighborhood.
-    """
-    norm_output = normalize(lm_output)
-    # Build a mapping: normalized neighborhood -> original neighborhood name.
-    norm_mapping = {normalize(name): name for name in valid_names}
-    best_match = difflib.get_close_matches(norm_output, norm_mapping.keys(), n=1, cutoff=0.6)
-    if best_match:
-        return norm_mapping[best_match[0]]
-    return lm_output
-
-def get_pricing_details(region_name: str, rag_data: pd.DataFrame) -> dict:
-    """
-    Retrieve pricing details for a given neighborhood.
-    Uses normalized matching with a fallback fuzzy match if needed.
-    """
+def get_pricing_timeseries(region_name: str, rag_data: pd.DataFrame) -> dict:
     if rag_data is None:
-        return {"error": "CSV data is not loaded."}
-    
-    norm_target = normalize(region_name)
-    def match_region(val):
-        return normalize(val) == norm_target
-    record = rag_data[rag_data["RegionName"].apply(match_region)]
-    
-    # If not found, try fuzzy matching.
-    if record.empty:
-        valid_names = rag_data["RegionName"].dropna().tolist()
-        closest = get_valid_neighborhood(region_name, valid_names)
-        record = rag_data[rag_data["RegionName"] == closest]
-    
-    if record.empty:
-        return {"error": "Neighborhood not found in the dataset."}
-    
-    price_columns = ["2024-01-31", "2024-02-29", "2024-03-31", "2025-01-31", "2025-02-28"]
-    try:
-        prices = record[price_columns].iloc[0].to_dict()
-        valid_prices = [price for price in prices.values() if pd.notnull(price)]
-        avg_price = sum(valid_prices) / len(valid_prices) if valid_prices else None
-    except Exception as e:
-        return {"error": f"Error retrieving pricing data: {str(e)}"}
-    
-    explanation = (
-        f"We computed the average price for '{region_name}' by considering the prices from "
-        f"{', '.join(price_columns)}. Based on the available data, the average home price is "
-        f"${avg_price:,.2f}." if avg_price is not None else "Price data is incomplete."
-    )
-    
-    return {
-        "prices": prices,
-        "average_price": avg_price,
-        "explanation": explanation
-    }
+        return {"error": "Dataset not loaded."}
+
+    # Strict lookup—nm_name came from FAISS so it should match exactly
+    rec = rag_data[rag_data["RegionName"] == region_name]
+    if rec.empty:
+        return {"error": f"No data for '{region_name}'."}
+
+    # Pull only the known date columns
+    dates = [c for c in
+             ["2024-01-31","2024-02-29","2024-03-31","2025-01-31","2025-02-28"]
+             if c in rec.columns]
+    row = rec.iloc[0]
+    return {d: row[d] for d in dates if pd.notnull(row[d])}
 
 # -------------------------------
-# Step 3: Define the Core Class
+# Core: NeighborhoodMatchmaker
 # -------------------------------
 class NeighborhoodMatchmaker:
     def __init__(self, city: str, rag_data_path: str = None):
-        """
-        Initialize the matchmaker by loading and filtering the CSV based on the city.
-        Build a cached lookup dictionary of normalized neighborhood names.
-        """
         self.city = city.strip()
-        self.normalized_city = normalize_city(self.city)
-        
+        # load & filter RAG CSV
         if rag_data_path and os.path.exists(rag_data_path):
-            data = pd.read_csv(rag_data_path)
-            # Filter rows by matching the normalized Metro column with the user city.
-            data = data[data["Metro"].fillna("").apply(lambda x: self.normalized_city in normalize_city(x))]
-            valid_types = {"city", "town", "neighborhood"}
-            self.rag_data = data[data["RegionType"].str.lower().isin(valid_types)]
-            # Cache a mapping: normalized neighborhood -> original neighborhood name.
-            self.normalized_lookup = {
-                normalize(name): name for name in self.rag_data["RegionName"].dropna().unique()
-            }
+            df = pd.read_csv(rag_data_path)
+
+            # Normalize City vs. Metro for robust matching
+            norm_city = normalize_key(self.city)
+            df["Metro_norm"] = (
+                df["Metro"]
+                .fillna("")
+                .apply(normalize_key)
+            )
+
+            df = df[df["Metro_norm"].str.contains(norm_city, na=False)]
+
+            # Also strip whitespace from RegionName for downstream lookups
+            df["RegionName"] = df["RegionName"].fillna("").str.strip()
+
+            types = {"city", "town", "neighborhood"}
+            self.rag_data = (
+                df[df["RegionType"].str.lower().isin(types)]
+                .reset_index(drop=True)
+            )
         else:
             self.rag_data = None
-            self.normalized_lookup = {}
+        # build FAISS index
+        if self.rag_data is not None and not self.rag_data.empty:
+            names = self.rag_data["RegionName"].dropna().tolist()
+            response = client.embeddings.create(input=names, model="text-embedding-3-small")
+            embeds = [d.embedding for d in response.data]
+            vecs = np.array(embeds, dtype='float32')
+            self.faiss_index = faiss.IndexFlatL2(vecs.shape[1])
+            self.faiss_index.add(vecs)
+            self.region_names = names
+        else:
+            self.faiss_index = None
+            self.region_names = []
 
-        # Minimal system prompt with a few key examples to guide the LLM.
+        # system prompt
+
         self.system_prompt = (
-            "You are a friendly, knowledgeable local guide for neighborhoods in "
-            f"{self.city}. Only suggest neighborhoods that are recognized communities (e.g., Ladue, Clayton, Des Peres, etc.). "
-            "Return your answer in JSON format with a key 'recommendations' containing objects with keys 'neighborhood' and 'explanation'. "
-            "After the JSON block, add: \"Don't forget to fill out the form at the bottom for more info!\""
+            f"You are a local real-estate guide for {self.city}, writing from the perspective of "
+            "a home-buyer exploring new neighborhoods.  \n"
+            "Only choose from the provided list.  \n"
+            "Output JSON with a single top-level key 'recommendations', whose value is an array of objects "
+            "each containing:\n"
+            "  • 'neighborhood': the exact name  \n"
+            "  • 'explanation': a narrative of at least three sentences that:\n"
+            "      1. Describes why this area fits the user’s criteria  \n"
+            "      2. For each amenity (e.g., library, farmers market), gives a specific location or address "
+            "(landmark, street intersection, etc.) so someone could look it up  \n"
+            "Write in a friendly, informative tone as if guiding a walking tour."
         )
-
+       
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(1))
-    def call_openai_api(self, messages: list) -> str:
-        """Calls OpenAI's Chat API with a list of messages."""
-        response = client.chat.completions.create(
-            model="gpt-4",
-            messages=messages
+    def call_llm(self, messages: list) -> str:
+        resp = client.chat.completions.create(model="gpt-4", messages=messages)
+        return resp.choices[0].message.content
+
+    def get_recommendation(self, details: str, amenities: list, proximity: str) -> list:
+        # 1) start with the main instruction
+        msgs = [{"role": "system", "content": self.system_prompt}]
+
+        # 2) provide the full list of valid neighborhoods
+        if self.region_names:
+            list_content = "Available neighborhoods: " + ", ".join(self.region_names)
+            msgs.append({"role": "system", "content": list_content})
+
+        # 3) user’s query
+        amen_str = ", ".join(amenities) if amenities else "amenities"
+        user = (
+            f"I want neighborhoods in {self.city}. "
+            f"{details} "
+            f"Amenities: {amen_str}. "
+            f"Proximity: {proximity}."
         )
-        return response.choices[0].message.content
+        msgs.append({"role": "user", "content": user})
 
-    def get_recommendation(self, user_details: str, amenities: list, amenity_proximity: str) -> str:
-        """Generates neighborhood recommendations from the LLM."""
-        messages = [{"role": "system", "content": self.system_prompt}]
-        selected_amenities = ', '.join(amenities) if amenities else "various local amenities"
-        user_prompt = (
-            f"I'm interested in neighborhoods in {self.city}. {user_details}. "
-            f"I'm looking for neighborhoods with these amenities: {selected_amenities}. "
-            f"I want to be {amenity_proximity} to these amenities."
-        )
-        messages.append({"role": "user", "content": user_prompt})
-        response = self.call_openai_api(messages)
-        return self.validate_output(response)
+        # 4) call and parse logs
+        out = self.call_llm(msgs)
+    
+        with st.expander("💬 Raw LLM output", expanded=False):
+            st.code(out, language="json")
 
-    def validate_output(self, text: str) -> str:
-        """Ensures the output ends with the required call-to-action."""
-        required_suffix = "Don't forget to fill out the form at the bottom for more info!"
-        if not text.strip().endswith(required_suffix):
-            text = text.strip() + "\n\n" + required_suffix
-        return text
-
-    def fetch_image(self, additional_details: str, neighborhood: str) -> Image.Image:
-        """Fetches an image for a given neighborhood using a text prompt."""
-        prompt_detail = f"Beautiful artistic view of {neighborhood} in {self.city}. {additional_details}"
-        if IMAGE_MODEL == "imagen":
-            return self.fetch_imagen_image(prompt_detail)
-        elif IMAGE_MODEL == "gemini":
-            return self.fetch_gemini_image(prompt_detail)
-        else:
-            st.error("Invalid IMAGE_MODEL setting. Please use 'gemini' or 'imagen'.")
-            return None
-
-    def fetch_gemini_image(self, prompt: str) -> Image.Image:
-        """Fetches an image using the Gemini API."""
+        match = re.search(r"\{.*\}", out, re.DOTALL)
+        if not match:
+            return []
+        json_str = match.group(0)
         try:
-            api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent"
-            if GEMINI_API_KEY:
-                headers = {"Content-Type": "application/json"}
-                api_url += f"?key={GEMINI_API_KEY}"
-            else:
-                st.error("Missing GEMINI_API_KEY.")
-                return None
-
-            payload = {
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"responseModalities": ["Text", "Image"]}
-            }
-            response = requests.post(api_url, headers=headers, json=payload)
-            response_json = response.json()
-            if "error" in response_json:
-                st.error(f"Gemini API Error: {response_json['error']['message']}")
-                return None
-
-            prediction = response_json.get("predictions", [{}])[0]
-            image_data = None
-            if "candidates" in prediction and prediction["candidates"]:
-                candidate = prediction["candidates"][0]
-                image_data = candidate.get("bytesBase64Encoded") or candidate.get("data")
-            else:
-                image_data = prediction.get("bytesBase64Encoded") or prediction.get("data")
-            if image_data:
-                return Image.open(BytesIO(base64.b64decode(image_data))).convert("RGB")
-            else:
-                st.info("Image not available from Gemini API.")
-                return None
-        except Exception as e:
-            st.error(f"Gemini image generation failed: {str(e)}")
-            return None
-
-    def fetch_imagen_image(self, prompt: str) -> Image.Image:
-        """Fetches an image using the Vertex AI Imagen model."""
-        try:
-            if not PROJECT_ID:
-                st.error("Missing PROJECT_ID for Vertex AI.")
-                return None
-            vertexai.init(project=PROJECT_ID, location=LOCATION)
-            generation_model = ImageGenerationModel.from_pretrained("imagen-3.0-generate-002")
-            images = generation_model.generate_images(
-                prompt=prompt,
-                number_of_images=1,
-                aspect_ratio="1:1",
-                negative_prompt="",
-                person_generation="",
-                safety_filter_level="",
-                add_watermark=True
-            )
-            pil_image = images[0]._pil_image
-            if pil_image.mode != "RGB":
-                pil_image = pil_image.convert("RGB")
-            return pil_image
-        except Exception as e:
-            st.error(f"Imagen image generation failed: {str(e)}")
-            return None
-
-    def parse_recommendations(self, text: str):
-        """Parses the JSON block from the LLM output to extract recommendations."""
-        json_str_match = re.search(r'\{.*\}', text, re.DOTALL)
-        recommendations = []
-        if json_str_match:
+            data = json.loads(json_str)
+        except json.JSONDecodeError:
             try:
-                data = json.loads(json_str_match.group(0))
-                recommendations = data.get("recommendations", [])
-            except json.JSONDecodeError as e:
-                st.error(f"JSON Decode Error: {str(e)}")
-        return recommendations
+                data = ast.literal_eval(json_str)
+            except (ValueError, SyntaxError):
+                return []
+        return data.get("recommendations", [])
+
+    def match_with_faiss(self, name: str) -> str:
+        if not self.faiss_index:
+            return name
+        response = client.embeddings.create(input=[name], model="text-embedding-3-small")
+        q = response.data[0].embedding
+        D, I = self.faiss_index.search(np.array([q], dtype='float32'), 1)
+        return self.region_names[int(I[0][0])]
+     
+    def imagen(self, prompt: str) -> Image.Image:
+        try:
+            vertexai.init(project=PROJECT_ID, location=LOCATION)
+            model = ImageGenerationModel.from_pretrained("imagen-3.0-generate-002")
+
+            # log the outgoing prompt for debugging
+            st.write(f"🎨 Generating image with prompt: {prompt!r}")
+
+            images = model.generate_images(prompt=prompt, number_of_images=1)
+
+            if not images:
+                st.warning("⚠️ No GeneratedImage objects returned.")
+                return None
+
+            # use the internal bytes buffer
+            raw = images[0]._image_bytes
+            if not raw:
+                st.warning("⚠️ Imagen API returned empty bytes—likely blocked or filtered.")
+                return None
+
+            # show size for transparency
+            st.write(f"📦 Received {len(raw)} bytes from Imagen API")
+
+            return Image.open(BytesIO(raw))
+
+        except Exception as e:
+            # log the full exception for troubleshooting
+            st.error(f"❌ Imagen image generation failed: {e!s}")
+            return None
+
+    def fetch_image(self, prompt: str, neighborhood: str) -> Image.Image:
+        text = f"Artistic view of {neighborhood} in {self.city}. {prompt}"
+        return self.imagen(text)
 
 # -------------------------------
-# Step 4: Streamlit UI
+# Streamlit App
 # -------------------------------
-st.set_page_config(layout="wide")
+st.set_page_config(layout='wide')
 st.title("🏡 Neighborhood Matchmaker")
+city = st.text_input("City", value="St. Louis")
+csv_path = "data/housing-data-slim-2024.csv" if os.path.exists("data/housing-data-slim-2024.csv") else None
+nm = NeighborhoodMatchmaker(city, csv_path)
 
-# User enters the city.
-city_input = st.text_input("Enter your city", value="St. Louis")
-# CSV file location.
-rag_csv = "data/housing-data-slim-2024.csv" if os.path.exists("data/housing-data-slim-2024.csv") else None
-# Initialize the matchmaker using the city input and CSV path.
-matchmaker = NeighborhoodMatchmaker(city=city_input, rag_data_path=rag_csv)
+amenities = st.multiselect("Amenities", ["Schools","Parks","Shopping","Transit","Restaurants","Libraries","Farmers Markets","Community Centers","Hospitals","Gyms","Cafes","Art Galleries","Theaters"])
+prox = st.selectbox("Proximity", ["Walking","Short drive","Far"])
+details = st.text_area("Details", placeholder="e.g., tree-lined streets.")
 
-st.subheader("Your Preferences")
-amenities_list = [
-    "Good Schools", "Parks", "Shopping Centers", "Public Transport", 
-    "Restaurants", "Gyms", "Cafes", "Nightlife", "Hospitals", "Libraries", "Grocery Stores"
-]
-selected_amenities = st.multiselect("Select amenities", amenities_list)
-amenity_proximity = st.selectbox("Proximity to Amenities", [
-    "Walking distance (.5-1 miles)",
-    "Short drive (2-5 miles)",
-    "Far is okay (5+ miles)"
-])
-user_details = st.text_area("Additional Details", placeholder="e.g., I love tree-lined streets, local parks, and vibrant neighborhoods.")
+if st.button("Find Neighborhood"):
+    recs = nm.get_recommendation(details, amenities, prox)
+    if not recs:
+        st.error("RAG Data for neighborhoods could not be found. View Raw LLM Output for details.")
+    else:
+        for r in recs:
+            nm_raw = r["neighborhood"]
+            nm_name = nm.match_with_faiss(nm_raw)
 
-if st.button('Find Neighborhood'):
-    try:
-        # Get recommendations from the LLM.
-        recommendation_output = matchmaker.get_recommendation(user_details, selected_amenities, amenity_proximity)
-        recommendations = matchmaker.parse_recommendations(recommendation_output)
-        if recommendations:
-            # Build a list of valid neighborhood names from the filtered CSV.
-            valid_names = matchmaker.rag_data["RegionName"].dropna().unique().tolist() if matchmaker.rag_data is not None else []
-            st.subheader("🏘️ Recommended Neighborhoods")
-            for rec in recommendations:
-                raw_neighborhood = rec.get("neighborhood") or "Unknown"
-                # Use fuzzy matching to map the LLM output to a valid neighborhood.
-                neighborhood = get_valid_neighborhood(raw_neighborhood, valid_names)
-                explanation = rec.get("explanation", "No details provided.")
-                st.markdown(f"### {neighborhood}")
-                st.write(explanation)
-                
-                # Retrieve and display pricing details.
-                pricing_details = get_pricing_details(neighborhood, matchmaker.rag_data)
-                if "error" not in pricing_details:
-                    formatted_price = (
-                        "${:,.2f}".format(pricing_details["average_price"])
-                        if pricing_details["average_price"] is not None
-                        else "N/A"
+            st.header(nm_name)
+            st.write(r.get("explanation",""))
+
+            # Create two tabs: Chart vs. Artistic
+            tab_chart, tab_art = st.tabs(["Chart", "Artistic"])
+
+            # Tab 1: RAG chart + caption
+            with tab_chart:
+                ts = get_pricing_timeseries(nm_name, nm.rag_data)
+                if "error" in ts:
+                    st.error(ts["error"])
+                else:
+                    st.caption("Data pulled via RAG from Zillow dataset")
+                    df = pd.DataFrame(list(ts.items()), columns=["Date","Price"])
+                    df["Date"] = pd.to_datetime(df["Date"])
+                    fig, ax = plt.subplots(figsize=(6,3))
+                    ax.plot(df["Date"], df["Price"], marker="o", markersize=4, linewidth=1)
+                    ax.yaxis.set_major_formatter(
+                        FuncFormatter(lambda v,pos: f"${v:,.0f}")
                     )
-                    st.write(f"**Data Transparency:** {pricing_details['explanation']}")
-                    st.write(f"**Average Price:** {formatted_price}")
-                else:
-                    st.info(pricing_details["error"])
-                
-                # Retrieve and display an image.
-                img = matchmaker.fetch_image(user_details, neighborhood)
-                if img:
-                    st.image(img, caption=f"View of {neighborhood} in {city_input}")
-                else:
-                    st.info("Image not available for this neighborhood.")
-        else:
-            st.error("No recommendations found.")
-    except Exception as e:
-        st.error(f"An error occurred: {str(e)}")
+                    ax.set_title("Historic Avg Home Prices", fontsize=10, pad=8)
+                    ax.set_xlabel("Date", fontsize=8)
+                    ax.set_ylabel("Price (USD)", fontsize=8)
+                    ax.tick_params(axis="x", labelrotation=45, labelsize=7)
+                    ax.tick_params(axis="y", labelsize=7)
+                    fig.tight_layout(pad=2)
+                    st.pyplot(fig, clear_figure=True)
+
+            # Tab 2: placeholder image
+            with tab_art:
+                # placeholder = Image.new("RGB", (400,300), color=(200,200,200))
+                # st.image(placeholder, caption=f"Artistic view of {nm_name}", use_container_width=False)
+                # # later swap in:
+                img = nm.fetch_image(details, nm_name)
+                if img: st.image(img, caption=f"{nm_name}, {city}")
