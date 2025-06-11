@@ -1,6 +1,5 @@
 <div align="center">
 
-📍 *Example: Neighborhood Image*  
 <img src="output/neighborhood.png" width="600"/>
 
 </div>
