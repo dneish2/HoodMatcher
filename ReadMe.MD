@@ -18,6 +18,8 @@ Neighborhood Matchmaker solves that by combining AI with real data:
 
 ## A Neighborhood is a Feeling
 
+###  [Watch the HoodMatcher Demo](https://youtu.be/C_eU21nwR-8)
+
 Real places aren’t just coordinates or prices, neighborhoods often times carry their own vibe.
 
 This app aims to visualize and communicate that feeling, with LLM-powered narratives and generated previews of life in each place.
@@ -74,7 +76,7 @@ Neighborhood Matchmaker uses a **RAG (Retrieval-Augmented Generation)** pattern 
 
 Here’s a short walkthrough of the full app experience:
 
-👉 [📺 Watch the Demo Video](https://github.com/dneish2/HoodMatcher/raw/main/output/matcherdemo.mp4)
+👉 [▶️ Watch the Demo Video](https://github.com/dneish2/HoodMatcher/raw/main/output/HoodMatcher.gif)
 
 ⸻
 
