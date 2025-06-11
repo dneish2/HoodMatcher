@@ -1,3 +1,10 @@
+<div align="center">
+
+📍 *Example: Neighborhood Image*  
+<img src="output/neighborhood.png" width="600"/>
+
+</div>
+
 # Neighborhood Matchmaker
 
 Neighborhood Matchmaker helps people find neighborhoods that match their lifestyle, not just their price range. Built with GPT-4, Zillow-based home data, and retrieval-augmented generation (RAG), this app delivers AI-powered recommendations that are actually grounded in local insights.
@@ -23,13 +30,6 @@ Neighborhood Matchmaker solves that by combining AI with real data:
 Real places aren’t just coordinates or prices, neighborhoods often times carry their own vibe.
 
 This app aims to visualize and communicate that feeling, with LLM-powered narratives and generated previews of life in each place.
-
-<div align="center">
-
-📍 *Example: Neighborhood Image*  
-<img src="output/neighborhood.png" width="600"/>
-
-</div>
 
 ---
 
