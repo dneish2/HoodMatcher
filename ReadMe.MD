@@ -76,7 +76,7 @@ Neighborhood Matchmaker uses a **RAG (Retrieval-Augmented Generation)** pattern 
 
 Here’s a short walkthrough of the full app experience:
 
-👉 [▶️ Watch the Demo Video](https://github.com/dneish2/HoodMatcher/raw/main/output/HoodMatcher.gif)
+![HoodMatcher Demo](https://github.com/dneish2/HoodMatcher/raw/main/output/HoodMatcher.gif)
 
 ⸻
 
