@@ -22,4 +22,4 @@ EXPOSE 8501
 ENV STREAMLIT_SERVER_PORT=8501
 
 # Run the Streamlit app
-CMD ["streamlit", "run", "app.py"]
+CMD ["streamlit", "run", "NeighborhoodMatcher.py"]
