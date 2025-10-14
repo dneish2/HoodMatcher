@@ -26,7 +26,13 @@ IMAGE_MODEL = os.getenv("IMAGE_MODEL", "imagen")
 PROJECT_ID = os.getenv("PROJECT_ID")
 LOCATION = os.getenv("LOCATION", "us-central1")
 
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = os.path.join(os.getcwd(), "application_default_credentials.json")
+# Leave GOOGLE_APPLICATION_CREDENTIALS alone when it's already configured;
+# otherwise rely on the local default file so Cloud Run can keep using its
+# service account when no key is mounted.
+if not os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
+    default_creds_path = os.path.join(os.getcwd(), "application_default_credentials.json")
+    if os.path.exists(default_creds_path):
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = default_creds_path
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 # -------------------------------
