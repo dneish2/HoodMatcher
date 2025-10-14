@@ -26,7 +26,14 @@ IMAGE_MODEL = os.getenv("IMAGE_MODEL", "imagen")
 PROJECT_ID = os.getenv("PROJECT_ID")
 LOCATION = os.getenv("LOCATION", "us-central1")
 
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = os.path.join(os.getcwd(), "application_default_credentials.json")
+# Respect an existing GOOGLE_APPLICATION_CREDENTIALS value, otherwise only
+# set it when the local default credential file is present. This allows Cloud
+# Run to fall back to its attached service account when no JSON key is
+# mounted with the application.
+if not os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
+    default_creds_path = os.path.join(os.getcwd(), "application_default_credentials.json")
+    if os.path.exists(default_creds_path):
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = default_creds_path
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 # -------------------------------
