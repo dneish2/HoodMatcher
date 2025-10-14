@@ -8,4 +8,4 @@ python-dotenv
 numpy
 faiss-cpu
 google-cloud-aiplatform
-python-dotenv
+
