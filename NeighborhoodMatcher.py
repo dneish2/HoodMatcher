@@ -2,6 +2,8 @@ import os
 import re
 import json
 import ast
+import logging
+from datetime import datetime
 import pandas as pd
 import matplotlib.pyplot as plt
 import streamlit as st
@@ -15,6 +17,8 @@ import vertexai
 from vertexai.preview.vision_models import ImageGenerationModel
 from io import BytesIO
 from matplotlib.ticker import FuncFormatter
+from google.cloud import storage
+from google.api_core.exceptions import NotFound, PreconditionFailed
 
 # -------------------------------
 # Load Environment Variables
@@ -25,6 +29,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 IMAGE_MODEL = os.getenv("IMAGE_MODEL", "imagen")
 PROJECT_ID = os.getenv("PROJECT_ID")
 LOCATION = os.getenv("LOCATION", "us-central1")
+EMAIL_BUCKET = os.getenv("EMAIL_BUCKET")
 
 # Leave GOOGLE_APPLICATION_CREDENTIALS alone when it's already configured;
 # otherwise rely on the local default file so Cloud Run can keep using its
@@ -258,4 +263,60 @@ if st.button("Find Neighborhood"):
                 # st.image(placeholder, caption=f"Artistic view of {nm_name}", use_container_width=False)
                 # # later swap in:
                 img = nm.fetch_image(details, nm_name)
-                if img: st.image(img, caption=f"{nm_name}, {city}")
+                if img:
+                    st.image(img, caption=f"{nm_name}, {city}")
+
+        st.divider()
+        with st.form("email_capture"):
+            st.markdown("### Get neighborhood updates")
+            email_input = st.text_input("Email address", placeholder="you@example.com")
+            opt_in = st.checkbox("I agree to receive follow-up emails about neighborhoods.")
+            submit_form = st.form_submit_button("Notify me")
+
+        if submit_form:
+            email_pattern = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+            if not re.match(email_pattern, email_input or ""):
+                st.error("Please enter a valid email address before submitting.")
+            elif not opt_in:
+                st.warning("Please check the opt-in box if you'd like us to reach out.")
+            elif not EMAIL_BUCKET:
+                err = "Email capture bucket is not configured."
+                st.error(err)
+                logging.error(err)
+            else:
+                try:
+                    storage_client = storage.Client()
+                    bucket = storage_client.bucket(EMAIL_BUCKET)
+                    blob_path = f"emails/{datetime.utcnow().strftime('%Y-%m-%d')}.jsonl"
+                    blob = bucket.blob(blob_path)
+
+                    payload = {
+                        "email": email_input.strip(),
+                        "opt_in": opt_in,
+                        "timestamp": datetime.utcnow().isoformat() + "Z",
+                        "city": city,
+                        "details": details,
+                        "amenities": amenities,
+                        "proximity": prox,
+                        "recommendations": recs,
+                    }
+                    line = json.dumps(payload, ensure_ascii=False) + "\n"
+
+                    try:
+                        blob.reload()
+                        existing = blob.download_as_text()
+                        generation = blob.generation
+                        content = (existing or "") + line
+                    except NotFound:
+                        generation = 0
+                        content = line
+
+                    try:
+                        blob.upload_from_string(content, if_generation_match=generation)
+                        st.success("Thanks! We'll send updates to your inbox soon.")
+                    except PreconditionFailed:
+                        st.error("We couldn't save your request right now. Please try again.")
+                        logging.exception("GCS generation precondition failed while saving email capture")
+                except Exception:
+                    st.error("Something went wrong while saving your email. Please try again later.")
+                    logging.exception("Unexpected failure while saving email capture")
