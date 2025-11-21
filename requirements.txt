@@ -1,4 +1,5 @@
 streamlit
+pydeck
 openai
 pandas
 matplotlib
