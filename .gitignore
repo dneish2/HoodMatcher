@@ -1,0 +1,12 @@
+# Ignore Python virtual environments
+venv/
+__pycache__/
+
+# Ignore macOS system files
+.DS_Store
+
+# Ignore credential or secrets
+application_default_credentials.json
+
+#Ignore .env
+.env
