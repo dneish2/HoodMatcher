@@ -271,6 +271,11 @@ with tab_matchmaker:
                 nm_name = nm.match_with_faiss(nm_raw)
 
                 st.header(nm_name)
+                if nm_name != nm_raw:
+                    st.info(
+                        "No exact Zillow match found for "
+                        f"'{nm_raw}'. Showing the closest dataset match instead."
+                    )
                 st.write(r.get("explanation", ""))
 
                 tab_chart, tab_art = st.tabs(["Chart", "Artistic"])
