@@ -135,6 +135,24 @@ def _extract_metric_from_block(lines: list[str], label: str) -> int | None:
     return None
 
 
+def _find_neighborhood_in_line(line: str, neighborhood_keys: set[str]) -> tuple[str | None, str | None]:
+    """Return the normalized neighborhood key and display label if present in ``line``.
+
+    The CompStat PDF renders neighborhood names at the start of a line followed by
+    columns of numbers. This helper looks for known neighborhood prefixes and
+    returns both the normalized key (for lookups) and the display label from the
+    original line when found.
+    """
+
+    lower_line = line.lower()
+    for key in sorted(neighborhood_keys, key=len, reverse=True):
+        if lower_line.startswith(key):
+            remainder = lower_line[len(key) :]
+            if not remainder or not remainder[0].isalpha():
+                return key, line[: len(key)].strip()
+    return None, None
+
+
 def _parse_compstat_text(text: str) -> pd.DataFrame:
     """Parse text from a CompStat PDF into the normalized map schema."""
 
@@ -148,11 +166,11 @@ def _parse_compstat_text(text: str) -> pd.DataFrame:
     idx = 0
     while idx < len(lines):
         current = lines[idx]
-        normalized = current.lower()
-        if normalized in neighborhood_keys:
+        normalized, label = _find_neighborhood_in_line(current, neighborhood_keys)
+        if normalized:
             block = []
             idx += 1
-            while idx < len(lines) and lines[idx].lower() not in neighborhood_keys:
+            while idx < len(lines) and not _find_neighborhood_in_line(lines[idx], neighborhood_keys)[0]:
                 block.append(lines[idx])
                 idx += 1
 
@@ -160,7 +178,7 @@ def _parse_compstat_text(text: str) -> pd.DataFrame:
             shootings_28 = _extract_metric_from_block(block, "SHOOTING INCIDENTS")
 
             base = {
-                "neighborhood_id": current,
+                "neighborhood_id": label or current,
                 "incidents_serious_30d": total_28 or 0,
                 "gunshots_30d": shootings_28 or 0,
                 "amenities_score": 0.0,
@@ -187,7 +205,10 @@ def _parse_compstat_text(text: str) -> pd.DataFrame:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df = df.dropna(subset=["lat", "lon"]).copy()
     df = df.reindex(columns=BASE_COLUMNS)
-    logger.info("Parsed %s neighborhoods from CompStat PDF", len(df))
+    if df.empty:
+        logger.warning("No neighborhoods parsed from CompStat PDF")
+    else:
+        logger.info("Parsed neighborhoods from CompStat PDF: %s", df.to_dict(orient="records"))
     return df
 
 
