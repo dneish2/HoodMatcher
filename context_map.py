@@ -182,7 +182,7 @@ def _parse_compstat_text(text: str) -> pd.DataFrame:
         "listings_30d",
     ])
     df = _fill_coordinates(df)
-    df = df.dropna(subset=["lat", "lon", "neighborhood_id"], errors="ignore").copy()
+    df = df.dropna(subset=["lat", "lon", "neighborhood_id"]).copy()
     for col in ["lat", "lon"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df = df.dropna(subset=["lat", "lon"]).copy()
