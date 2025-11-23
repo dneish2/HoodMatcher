@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 from typing import Iterable, List
 
@@ -41,7 +42,9 @@ NEIGHBORHOOD_COORDS = {
 }
 
 # Bundled CompStat PDF stored in the repo so users can load it without uploading.
-DEFAULT_COMPSTAT_PATH = Path("data/compstat_sample.pdf")
+DEFAULT_COMPSTAT_PATH = Path("data/Compstat01A-N.pdf")
+
+logger = logging.getLogger(__name__)
 
 # Expected downstream schema for the map
 BASE_COLUMNS = [
@@ -169,22 +172,40 @@ def _parse_compstat_text(text: str) -> pd.DataFrame:
             continue
         idx += 1
 
-    df = pd.DataFrame(rows)
+    df = pd.DataFrame(rows, columns=[
+        "neighborhood_id",
+        "incidents_serious_30d",
+        "gunshots_30d",
+        "amenities_score",
+        "price_change_pct",
+        "events_30d",
+        "listings_30d",
+    ])
     df = _fill_coordinates(df)
-    df = df.dropna(subset=["lat", "lon", "neighborhood_id"]).copy()
+    df = df.dropna(subset=["lat", "lon", "neighborhood_id"], errors="ignore").copy()
     for col in ["lat", "lon"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df = df.dropna(subset=["lat", "lon"]).copy()
-    return df.reindex(columns=BASE_COLUMNS)
+    df = df.reindex(columns=BASE_COLUMNS)
+    logger.info("Parsed %s neighborhoods from CompStat PDF", len(df))
+    return df
 
 
 def _load_compstat_pdf(file_obj) -> pd.DataFrame:
     """Read a CompStat PDF into the normalized map schema."""
 
-    text = _extract_text_from_pdf(file_obj)
-    df = _parse_compstat_text(text)
+    try:
+        text = _extract_text_from_pdf(file_obj)
+        df = _parse_compstat_text(text)
+    except Exception as exc:
+        logger.exception("Failed to parse CompStat PDF")
+        st.error(f"We could not read that CompStat PDF: {exc}")
+        return pd.DataFrame(columns=BASE_COLUMNS)
+
     if df.empty:
         st.warning("No recognizable CompStat rows were found in the PDF.")
+    else:
+        st.info(f"Loaded {len(df)} neighborhoods from the CompStat PDF.")
     return df
 
 

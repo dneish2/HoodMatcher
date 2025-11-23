@@ -383,7 +383,7 @@ with tab_matchmaker:
 with tab_context_map:
     st.subheader("Neighborhood Context Map")
     st.caption(
-        "Load the bundled CompStat PDF or upload a new report to plot crime trends on the map."
+        "Load the on-disk CompStat PDF or upload a new report to plot crime trends on the map."
     )
 
     upload_col, options_col = st.columns([3, 2])
@@ -391,17 +391,15 @@ with tab_context_map:
         data_source = st.radio(
             "Choose a CompStat dataset",
             [
-                "Bundled sample (11/3–11/9/2025)",
+                "On-disk CompStat PDF (data/Compstat01A-N.pdf)",
                 "Upload a PDF/CSV/JSON",
             ],
             index=0,
             key="context_map_source",
         )
         uploaded_context = None
-        if data_source.startswith("Bundled"):
-            st.caption(
-                "Using the bundled CompStat PDF stored at data/compstat_sample.pdf."
-            )
+        if data_source.startswith("On-disk"):
+            st.caption("Using the CompStat PDF stored on disk.")
         else:
             uploaded_context = st.file_uploader(
                 "Upload neighborhoods PDF/CSV/JSON",
@@ -409,31 +407,22 @@ with tab_context_map:
                 key="context_map_uploader",
             )
     with options_col:
-        show_labels = st.checkbox(
-            "Show neighborhood labels", value=True, key="context_map_labels"
-        )
         show_amenity_ring = st.checkbox(
             "Show amenities ring", value=True, key="context_map_ring"
         )
-        tone = st.selectbox(
-            "Summary tone",
-            ["Factual", "Empathetic", "Energetic"],
-            index=0,
-            key="context_map_tone",
-        )
 
-    if data_source.startswith("Bundled"):
+    if data_source.startswith("On-disk"):
         map_df = load_bundled_compstat()
     else:
         map_df = load_context_dataset(uploaded_context)
     prepared_map_df = prepare_map_dataframe(map_df)
     map_options = ContextMapOptions(
-        show_labels=show_labels, show_amenity_ring=show_amenity_ring
+        show_labels=True, show_amenity_ring=show_amenity_ring
     )
 
     if prepared_map_df.empty:
         st.info(
-            "The map stays blank until you load the bundled CompStat PDF or upload your own report."
+            "The map stays blank until you load the on-disk CompStat PDF or upload your own report."
         )
     deck = build_deck(prepared_map_df, map_options)
     st.pydeck_chart(deck)
@@ -473,9 +462,9 @@ with tab_context_map:
                 unsafe_allow_html=True,
             )
             summary = summarize_context_row(
-                rec_row, tone=tone, window_days=DEFAULT_WINDOW_DAYS
+                rec_row, window_days=DEFAULT_WINDOW_DAYS
             )
-            column.markdown(f"**Summary ({tone}):** {summary}")
+            column.markdown(f"**Summary:** {summary}")
 
     st.caption(
         "Future: bind card click to update map view; plug real amenities/listings/events layers; swap the deterministic summaries with an LLM formatter."
