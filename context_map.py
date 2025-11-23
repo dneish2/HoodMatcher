@@ -140,16 +140,21 @@ def _find_neighborhood_in_line(line: str, neighborhood_keys: set[str]) -> tuple[
 
     The CompStat PDF renders neighborhood names at the start of a line followed by
     columns of numbers. This helper looks for known neighborhood prefixes and
-    returns both the normalized key (for lookups) and the display label from the
-    original line when found.
+    returns both the normalized key (for lookups) and a cleaned display label from
+    the original line when found.
     """
 
     lower_line = line.lower()
     for key in sorted(neighborhood_keys, key=len, reverse=True):
         if lower_line.startswith(key):
             remainder = lower_line[len(key) :]
-            if not remainder or not remainder[0].isalpha():
-                return key, line[: len(key)].strip()
+            if remainder and remainder[0].isalpha():
+                continue
+
+            # Strip out any trailing metrics so the display label is stable
+            label_match = re.match(r"[A-Za-z'\-\s]+", line)
+            label = (label_match.group(0) if label_match else line[: len(key)]).strip()
+            return key, label
     return None, None
 
 
@@ -177,8 +182,9 @@ def _parse_compstat_text(text: str) -> pd.DataFrame:
             total_28 = _extract_metric_from_block(block, "TOTAL")
             shootings_28 = _extract_metric_from_block(block, "SHOOTING INCIDENTS")
 
+            display_name = (label or current).title()
             base = {
-                "neighborhood_id": label or current,
+                "neighborhood_id": display_name,
                 "incidents_serious_30d": total_28 or 0,
                 "gunshots_30d": shootings_28 or 0,
                 "amenities_score": 0.0,
@@ -208,7 +214,11 @@ def _parse_compstat_text(text: str) -> pd.DataFrame:
     if df.empty:
         logger.warning("No neighborhoods parsed from CompStat PDF")
     else:
-        logger.info("Parsed neighborhoods from CompStat PDF: %s", df.to_dict(orient="records"))
+        logger.info(
+            "Parsed %d neighborhoods from CompStat PDF: %s",
+            len(df),
+            df.to_dict(orient="records"),
+        )
     return df
 
 
@@ -227,6 +237,19 @@ def _load_compstat_pdf(file_obj) -> pd.DataFrame:
         st.warning("No recognizable CompStat rows were found in the PDF.")
     else:
         st.info(f"Loaded {len(df)} neighborhoods from the CompStat PDF.")
+        with st.expander("📜 Parsed CompStat rows", expanded=False):
+            st.dataframe(
+                df[
+                    [
+                        "neighborhood_id",
+                        "incidents_serious_30d",
+                        "gunshots_30d",
+                        "lat",
+                        "lon",
+                    ]
+                ],
+                use_container_width=True,
+            )
     return df
 
 
