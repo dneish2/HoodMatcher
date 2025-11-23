@@ -7,6 +7,7 @@ from typing import Iterable, List
 import numpy as np
 import pandas as pd
 import pydeck as pdk
+import re
 import streamlit as st
 
 DEFAULT_WINDOW_DAYS = 30
@@ -27,6 +28,28 @@ PALETTE = {
     "ring":  [41, 128, 185, 80] # amenities ring (semi-transparent)
 }
 
+# Minimal neighborhood → centroid reference to anchor the CompStat upload.
+NEIGHBORHOOD_COORDS = {
+    "academy": (38.6621, -90.2446),
+    "baden": (38.7027, -90.2250),
+    "benton park": (38.6006, -90.2109),
+    "benton park west": (38.6039, -90.2258),
+    "bevo mill": (38.5761, -90.2876),
+}
+
+# Expected downstream schema for the map
+BASE_COLUMNS = [
+    "neighborhood_id",
+    "lat",
+    "lon",
+    "incidents_serious_30d",
+    "gunshots_30d",
+    "amenities_score",
+    "price_change_pct",
+    "events_30d",
+    "listings_30d",
+]
+
 
 @dataclass
 class ContextMapOptions:
@@ -36,53 +59,147 @@ class ContextMapOptions:
     show_amenity_ring: bool = True
 
 
-def get_demo_data() -> pd.DataFrame:
-    """Return placeholder neighborhood rows until real data is wired in."""
+def _normalize_columns(columns: Iterable[str]) -> dict:
+    """Return a mapping from normalized name → original column name."""
 
-    return pd.DataFrame(
+    mapping = {}
+    for col in columns:
+        normalized = re.sub(r"[^a-z0-9]+", "_", col.lower()).strip("_")
+        mapping[normalized] = col
+    return mapping
+
+
+def _lookup_first(mapping: dict, candidates: Iterable[str]) -> str | None:
+    """Find the first candidate key present in ``mapping`` and return the original column name."""
+
+    for candidate in candidates:
+        if candidate in mapping:
+            return mapping[candidate]
+    return None
+
+
+def _numeric_from_row(row: pd.Series, col_name: str) -> int:
+    """Safely pull an integer-like value from a row."""
+
+    try:
+        return int(pd.to_numeric(row.get(col_name, 0), errors="coerce") or 0)
+    except Exception:
+        return 0
+
+
+def _fill_coordinates(df: pd.DataFrame) -> pd.DataFrame:
+    """Ensure ``lat``/``lon`` exist, using reference centroids when missing."""
+
+    df = df.copy()
+    has_lat_lon = {"lat", "lon"}.issubset({c.lower() for c in df.columns})
+    if has_lat_lon:
+        df = df.rename(columns={"Lat": "lat", "Lon": "lon", "LAT": "lat", "LON": "lon"})
+        return df
+
+    # derive coordinates from the lookup table
+    lats = []
+    lons = []
+    for _, row in df.iterrows():
+        key = str(row.get("neighborhood_id", "")).strip().lower()
+        lat, lon = NEIGHBORHOOD_COORDS.get(key, (None, None))
+        lats.append(lat)
+        lons.append(lon)
+
+    df["lat"] = lats
+    df["lon"] = lons
+    return df
+
+
+def _normalize_compstat_schema(df: pd.DataFrame) -> pd.DataFrame:
+    """Transform a CompStat-style CSV into the columns expected by the map."""
+
+    if df.empty:
+        return pd.DataFrame(columns=BASE_COLUMNS)
+
+    colmap = _normalize_columns(df.columns)
+    neighborhood_col = _lookup_first(colmap, ["neighborhood", "neighborhood_id", "area"])
+    if neighborhood_col is None:
+        st.error("Upload must include a neighborhood column.")
+        return pd.DataFrame(columns=BASE_COLUMNS)
+
+    total_col = _lookup_first(
+        colmap,
         [
-            {
-                "neighborhood_id": "Soulard",
-                "lat": 38.6108,
-                "lon": -90.2136,
-                "incidents_serious_30d": 2,
-                "gunshots_30d": 0,
-                "amenities_score": 0.78,
-                "price_change_pct": 3.1,
-                "events_30d": 5,
-                "listings_30d": 9,
-            },
-            {
-                "neighborhood_id": "Tower Grove",
-                "lat": 38.6073,
-                "lon": -90.2427,
-                "incidents_serious_30d": 3,
-                "gunshots_30d": 1,
-                "amenities_score": 0.84,
-                "price_change_pct": 2.4,
-                "events_30d": 6,
-                "listings_30d": 7,
-            },
-            {
-                "neighborhood_id": "The Hill",
-                "lat": 38.6176,
-                "lon": -90.2729,
-                "incidents_serious_30d": 1,
-                "gunshots_30d": 0,
-                "amenities_score": 0.65,
-                "price_change_pct": 1.2,
-                "events_30d": 2,
-                "listings_30d": 4,
-            },
-        ]
+            "total_last_28_days",
+            "last_28_days_total",
+            "total_28_days",
+            "last_28_days",
+            "total",
+        ],
     )
+    shooting_col = _lookup_first(
+        colmap,
+        [
+            "shooting_incidents_last_28_days",
+            "last_28_days_shooting_incidents",
+            "shooting_incidents",
+        ],
+    )
+
+    violent_candidates = [
+        "murder_last_28_days",
+        "sexual_assault_last_28_days",
+        "robbery_last_28_days",
+        "aggravated_assault_last_28_days",
+        "burglary_last_28_days",
+        "felony_theft_last_28_days",
+        "auto_theft_last_28_days",
+    ]
+
+    rows = []
+    for _, row in df.iterrows():
+        base = {
+            "neighborhood_id": str(row[neighborhood_col]).strip(),
+            "amenities_score": 0.0,
+            "price_change_pct": 0.0,
+            "events_30d": 0,
+            "listings_30d": 0,
+        }
+
+        total_val = _numeric_from_row(row, total_col) if total_col else 0
+
+        if total_val == 0:
+            total_val = 0
+            for candidate in violent_candidates:
+                col_name = _lookup_first(colmap, [candidate])
+                if col_name:
+                    total_val += _numeric_from_row(row, col_name)
+
+        base["incidents_serious_30d"] = total_val
+
+        if shooting_col:
+            base["gunshots_30d"] = _numeric_from_row(row, shooting_col)
+        else:
+            base["gunshots_30d"] = 0
+
+        rows.append(base)
+
+    normalized = pd.DataFrame(rows)
+    normalized = _fill_coordinates(normalized)
+    normalized = normalized.dropna(subset=["lat", "lon", "neighborhood_id"])
+
+    for col in ["lat", "lon"]:
+        normalized[col] = pd.to_numeric(normalized[col], errors="coerce")
+
+    normalized = normalized.dropna(subset=["lat", "lon"]).copy()
+    return normalized.reindex(columns=BASE_COLUMNS)
 
 
 def load_uploaded(uploaded_file) -> pd.DataFrame:
-    """Load an uploaded CSV/JSON to a normalized DataFrame."""
+    """Load an uploaded CSV/JSON to a normalized DataFrame.
+
+    The CSV is expected to be a table extracted from the CompStat PDF, with
+    28-day counts per neighborhood. If no file is provided, the map remains
+    empty so the user can upload their own data.
+    """
 
     if uploaded_file is None:
-        return get_demo_data()
+        return pd.DataFrame(columns=BASE_COLUMNS)
 
     name = uploaded_file.name.lower()
     if name.endswith(".csv"):
@@ -90,28 +207,13 @@ def load_uploaded(uploaded_file) -> pd.DataFrame:
     elif name.endswith(".json"):
         df = pd.read_json(uploaded_file)
     else:
-        st.warning("Unsupported file type; using demo data.")
-        df = get_demo_data()
+        st.warning("Unsupported file type; please upload CSV or JSON.")
+        return pd.DataFrame(columns=BASE_COLUMNS)
 
-    required = [
-        "neighborhood_id",
-        "lat",
-        "lon",
-        "incidents_serious_30d",
-        "gunshots_30d",
-        "amenities_score",
-        "price_change_pct",
-    ]
-    for col in required:
-        if col not in df.columns:
-            st.error(f"Missing required column: {col}. Using demo data instead.")
-            return get_demo_data()
-
-    df = df.dropna(subset=["neighborhood_id", "lat", "lon"]).copy()
-    df["events_30d"] = df.get("events_30d", 0).fillna(0).astype(int)
-    df["listings_30d"] = df.get("listings_30d", 0).fillna(0).astype(int)
-
-    return df
+    normalized = _normalize_compstat_schema(df)
+    if normalized.empty:
+        st.warning("No valid neighborhood rows were found in the upload.")
+    return normalized
 
 
 def color_for_incidents(incidents: int) -> List[int]:

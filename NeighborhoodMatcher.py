@@ -381,9 +381,7 @@ with tab_matchmaker:
 
 with tab_context_map:
     st.subheader("Neighborhood Context Map")
-    st.caption(
-        "Upload a dataset or explore the placeholder neighborhoods to preview the map experience."
-    )
+    st.caption("Upload the CompStat CSV to plot crime trends on the map.")
 
     upload_col, options_col = st.columns([3, 2])
     with upload_col:
@@ -412,6 +410,8 @@ with tab_context_map:
         show_labels=show_labels, show_amenity_ring=show_amenity_ring
     )
 
+    if prepared_map_df.empty:
+        st.info("The map is blank until you upload the CompStat CSV extracted from the PDF.")
     deck = build_deck(prepared_map_df, map_options)
     st.pydeck_chart(deck)
 
