@@ -135,7 +135,7 @@ class NeighborhoodMatchmaker:
        
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(1))
     def call_llm(self, messages: list) -> str:
-        resp = client.chat.completions.create(model="gpt-4", messages=messages)
+        resp = client.chat.completions.create(model="gpt-4.1-nano", messages=messages)
         return resp.choices[0].message.content
 
     def get_recommendation(self, details: str, amenities: list, proximity: str) -> list:
