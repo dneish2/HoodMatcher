@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable, List
 
 import numpy as np
 import pandas as pd
 import pydeck as pdk
+import importlib
+import importlib.util
 import re
 import streamlit as st
 
@@ -36,6 +39,9 @@ NEIGHBORHOOD_COORDS = {
     "benton park west": (38.6039, -90.2258),
     "bevo mill": (38.5761, -90.2876),
 }
+
+# Bundled CompStat PDF stored in the repo so users can load it without uploading.
+DEFAULT_COMPSTAT_PATH = Path("data/compstat_sample.pdf")
 
 # Expected downstream schema for the map
 BASE_COLUMNS = [
@@ -85,6 +91,101 @@ def _numeric_from_row(row: pd.Series, col_name: str) -> int:
         return int(pd.to_numeric(row.get(col_name, 0), errors="coerce") or 0)
     except Exception:
         return 0
+
+
+def _extract_text_from_pdf(file_obj) -> str:
+    """Extract text from a PDF using ``pdfplumber`` when available.
+
+    Falls back to a naive stream parser for uncompressed text-only PDFs so the
+    bundled sample still works even if the dependency is missing.
+    """
+
+    file_obj.seek(0)
+    spec = importlib.util.find_spec("pdfplumber")
+    if spec:
+        pdfplumber = importlib.import_module("pdfplumber")
+        with pdfplumber.open(file_obj) as pdf:
+            pages = [page.extract_text() or "" for page in pdf.pages]
+        return "\n".join(pages)
+
+    raw = file_obj.read()
+    segments = re.findall(rb"BT(.*?)ET", raw, flags=re.DOTALL)
+    text_segments = []
+    for seg in segments:
+        try:
+            text_segments.append(seg.decode("latin-1", errors="ignore"))
+        except Exception:
+            continue
+    return "\n".join(text_segments)
+
+
+def _extract_metric_from_block(lines: list[str], label: str) -> int | None:
+    """Find ``label`` in ``lines`` and return the 28-day 2025 value (3rd number)."""
+
+    for line in lines:
+        if not line.lower().startswith(label.lower()):
+            continue
+        sanitized = re.sub(r"-?\d+%", "", line)
+        numbers = [int(n) for n in re.findall(r"-?\d+", sanitized)]
+        if len(numbers) >= 3:
+            return numbers[2]
+    return None
+
+
+def _parse_compstat_text(text: str) -> pd.DataFrame:
+    """Parse text from a CompStat PDF into the normalized map schema."""
+
+    if not text:
+        return pd.DataFrame(columns=BASE_COLUMNS)
+
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    neighborhood_keys = set(NEIGHBORHOOD_COORDS.keys())
+
+    rows = []
+    idx = 0
+    while idx < len(lines):
+        current = lines[idx]
+        normalized = current.lower()
+        if normalized in neighborhood_keys:
+            block = []
+            idx += 1
+            while idx < len(lines) and lines[idx].lower() not in neighborhood_keys:
+                block.append(lines[idx])
+                idx += 1
+
+            total_28 = _extract_metric_from_block(block, "TOTAL")
+            shootings_28 = _extract_metric_from_block(block, "SHOOTING INCIDENTS")
+
+            base = {
+                "neighborhood_id": current,
+                "incidents_serious_30d": total_28 or 0,
+                "gunshots_30d": shootings_28 or 0,
+                "amenities_score": 0.0,
+                "price_change_pct": 0.0,
+                "events_30d": 0,
+                "listings_30d": 0,
+            }
+            rows.append(base)
+            continue
+        idx += 1
+
+    df = pd.DataFrame(rows)
+    df = _fill_coordinates(df)
+    df = df.dropna(subset=["lat", "lon", "neighborhood_id"]).copy()
+    for col in ["lat", "lon"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df = df.dropna(subset=["lat", "lon"]).copy()
+    return df.reindex(columns=BASE_COLUMNS)
+
+
+def _load_compstat_pdf(file_obj) -> pd.DataFrame:
+    """Read a CompStat PDF into the normalized map schema."""
+
+    text = _extract_text_from_pdf(file_obj)
+    df = _parse_compstat_text(text)
+    if df.empty:
+        st.warning("No recognizable CompStat rows were found in the PDF.")
+    return df
 
 
 def _fill_coordinates(df: pd.DataFrame) -> pd.DataFrame:
@@ -191,29 +292,50 @@ def _normalize_compstat_schema(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def load_uploaded(uploaded_file) -> pd.DataFrame:
-    """Load an uploaded CSV/JSON to a normalized DataFrame.
-
-    The CSV is expected to be a table extracted from the CompStat PDF, with
-    28-day counts per neighborhood. If no file is provided, the map remains
-    empty so the user can upload their own data.
-    """
+    """Load a PDF/CSV/JSON into the normalized DataFrame used by the map."""
 
     if uploaded_file is None:
         return pd.DataFrame(columns=BASE_COLUMNS)
 
-    name = uploaded_file.name.lower()
-    if name.endswith(".csv"):
-        df = pd.read_csv(uploaded_file)
-    elif name.endswith(".json"):
-        df = pd.read_json(uploaded_file)
-    else:
-        st.warning("Unsupported file type; please upload CSV or JSON.")
-        return pd.DataFrame(columns=BASE_COLUMNS)
+    close_after = False
+    file_obj = uploaded_file
+    name = getattr(uploaded_file, "name", "")
 
-    normalized = _normalize_compstat_schema(df)
+    if isinstance(uploaded_file, (str, Path)):
+        path = Path(uploaded_file)
+        name = path.name
+        file_obj = path.open("rb")
+        close_after = True
+
+    name = (name or "").lower()
+
+    try:
+        if name.endswith(".pdf"):
+            normalized = _load_compstat_pdf(file_obj)
+        elif name.endswith(".csv"):
+            normalized = _normalize_compstat_schema(pd.read_csv(file_obj))
+        elif name.endswith(".json"):
+            normalized = _normalize_compstat_schema(pd.read_json(file_obj))
+        else:
+            st.warning("Unsupported file type; please upload PDF, CSV, or JSON.")
+            return pd.DataFrame(columns=BASE_COLUMNS)
+    finally:
+        if close_after:
+            file_obj.close()
+
     if normalized.empty:
         st.warning("No valid neighborhood rows were found in the upload.")
     return normalized
+
+
+def load_bundled_compstat() -> pd.DataFrame:
+    """Load the baked-in CompStat PDF from the repository if present."""
+
+    if DEFAULT_COMPSTAT_PATH.exists():
+        return load_uploaded(DEFAULT_COMPSTAT_PATH)
+
+    st.warning("Bundled CompStat PDF is missing from the data directory.")
+    return pd.DataFrame(columns=BASE_COLUMNS)
 
 
 def color_for_incidents(incidents: int) -> List[int]:

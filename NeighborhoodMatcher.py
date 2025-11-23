@@ -24,6 +24,7 @@ from context_map import (
     ContextMapOptions,
     DEFAULT_WINDOW_DAYS,
     build_deck,
+    load_bundled_compstat,
     load_uploaded as load_context_dataset,
     prepare_map_dataframe,
     select_recommendations,
@@ -381,15 +382,32 @@ with tab_matchmaker:
 
 with tab_context_map:
     st.subheader("Neighborhood Context Map")
-    st.caption("Upload the CompStat CSV to plot crime trends on the map.")
+    st.caption(
+        "Load the bundled CompStat PDF or upload a new report to plot crime trends on the map."
+    )
 
     upload_col, options_col = st.columns([3, 2])
     with upload_col:
-        uploaded_context = st.file_uploader(
-            "Upload neighborhoods CSV/JSON",
-            type=["csv", "json"],
-            key="context_map_uploader",
+        data_source = st.radio(
+            "Choose a CompStat dataset",
+            [
+                "Bundled sample (11/3–11/9/2025)",
+                "Upload a PDF/CSV/JSON",
+            ],
+            index=0,
+            key="context_map_source",
         )
+        uploaded_context = None
+        if data_source.startswith("Bundled"):
+            st.caption(
+                "Using the bundled CompStat PDF stored at data/compstat_sample.pdf."
+            )
+        else:
+            uploaded_context = st.file_uploader(
+                "Upload neighborhoods PDF/CSV/JSON",
+                type=["pdf", "csv", "json"],
+                key="context_map_uploader",
+            )
     with options_col:
         show_labels = st.checkbox(
             "Show neighborhood labels", value=True, key="context_map_labels"
@@ -404,14 +422,19 @@ with tab_context_map:
             key="context_map_tone",
         )
 
-    map_df = load_context_dataset(uploaded_context)
+    if data_source.startswith("Bundled"):
+        map_df = load_bundled_compstat()
+    else:
+        map_df = load_context_dataset(uploaded_context)
     prepared_map_df = prepare_map_dataframe(map_df)
     map_options = ContextMapOptions(
         show_labels=show_labels, show_amenity_ring=show_amenity_ring
     )
 
     if prepared_map_df.empty:
-        st.info("The map is blank until you upload the CompStat CSV extracted from the PDF.")
+        st.info(
+            "The map stays blank until you load the bundled CompStat PDF or upload your own report."
+        )
     deck = build_deck(prepared_map_df, map_options)
     st.pydeck_chart(deck)
 
