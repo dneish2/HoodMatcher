@@ -16,6 +16,8 @@ from vertexai.preview.vision_models import ImageGenerationModel
 from io import BytesIO
 from matplotlib.ticker import FuncFormatter
 
+from data_loader import load_city_dataset
+
 # -------------------------------
 # Load Environment Variables
 # -------------------------------
@@ -38,9 +40,6 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 # -------------------------------
 # Helper: pricing timeseries
 # -------------------------------
-def normalize_key(text: str) -> str:
-    """Lowercase, strip non-alphanumerics so 'St. Louis' → 'stlouis'."""
-    return re.sub(r'[^a-z0-9]', '', text.lower() or "")
 
 def get_pricing_timeseries(region_name: str, rag_data: pd.DataFrame) -> dict:
     if rag_data is None:
@@ -64,30 +63,7 @@ def get_pricing_timeseries(region_name: str, rag_data: pd.DataFrame) -> dict:
 class NeighborhoodMatchmaker:
     def __init__(self, city: str, rag_data_path: str = None):
         self.city = city.strip()
-        # load & filter RAG CSV
-        if rag_data_path and os.path.exists(rag_data_path):
-            df = pd.read_csv(rag_data_path)
-
-            # Normalize City vs. Metro for robust matching
-            norm_city = normalize_key(self.city)
-            df["Metro_norm"] = (
-                df["Metro"]
-                .fillna("")
-                .apply(normalize_key)
-            )
-
-            df = df[df["Metro_norm"].str.contains(norm_city, na=False)]
-
-            # Also strip whitespace from RegionName for downstream lookups
-            df["RegionName"] = df["RegionName"].fillna("").str.strip()
-
-            types = {"city", "town", "neighborhood"}
-            self.rag_data = (
-                df[df["RegionType"].str.lower().isin(types)]
-                .reset_index(drop=True)
-            )
-        else:
-            self.rag_data = None
+        self.rag_data = load_city_dataset(self.city, rag_data_path=rag_data_path)
         # build FAISS index
         if self.rag_data is not None and not self.rag_data.empty:
             names = self.rag_data["RegionName"].dropna().tolist()
