@@ -135,7 +135,7 @@ class NeighborhoodMatchmaker:
        
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(1))
     def call_llm(self, messages: list) -> str:
-        resp = client.chat.completions.create(model="gpt-4", messages=messages)
+        resp = client.chat.completions.create(model="gpt-4.1-nano", messages=messages)
         return resp.choices[0].message.content
 
     def get_recommendation(self, details: str, amenities: list, proximity: str) -> list:
@@ -271,6 +271,11 @@ with tab_matchmaker:
                 nm_name = nm.match_with_faiss(nm_raw)
 
                 st.header(nm_name)
+                if nm_name != nm_raw:
+                    st.info(
+                        "No exact Zillow match found for "
+                        f"'{nm_raw}'. Showing the closest dataset match instead."
+                    )
                 st.write(r.get("explanation", ""))
 
                 tab_chart, tab_art = st.tabs(["Chart", "Artistic"])
