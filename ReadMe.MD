@@ -162,6 +162,11 @@ To run the application successfully, you will need the following API credentials
 - **`OPENAI_API_KEY`** — Required for GPT-4 and text embeddings (e.g., `text-embedding-3-small`)
 - **`GEMINI_API_KEY`** *(optional)* — Used for generating neighborhood images via Google Imagen
 - **`GOOGLE_APPLICATION_CREDENTIALS`** *(optional)* — Path to your `application_default_credentials.json` file if using VertexAI
+- **`BIGQUERY_PROJECT`, `BIGQUERY_DATASET`, `BIGQUERY_TABLE`** *(optional)* — Enables BigQuery-backed RAG data loading. In Cloud Run, grant only `roles/bigquery.dataViewer` on the target dataset/table to the runtime service account.
+- **`DATA_SOURCE_MODE`** *(optional, default `auto`)* — `auto` prefers BigQuery when configured and falls back to CSV when available; `bigquery` requires BigQuery and never uses CSV fallback; `csv` always uses local CSV.
+- **`CITY_MATCH_MODE`** *(optional, default `contains`)* — Controls city filtering semantics (`contains`, `exact`, `prefix`) for both BigQuery and CSV paths.
+- **`BIGQUERY_DATE_COLUMNS`** *(optional)* — Comma-separated date columns to fetch from BigQuery so queries avoid `SELECT *`.
+- **`CACHE_TTL_SECONDS`** *(optional, default `600`)* — In-process TTL cache for city-scoped datasets to reduce repeated reads.
 
 You can set these environment variables in your terminal:
 
@@ -169,8 +174,20 @@ You can set these environment variables in your terminal:
 export OPENAI_API_KEY="your-openai-key"
 export GEMINI_API_KEY="your-gemini-key"
 export GOOGLE_APPLICATION_CREDENTIALS="./application_default_credentials.json"
+export BIGQUERY_PROJECT="your-gcp-project"
+export BIGQUERY_DATASET="your_dataset"
+export BIGQUERY_TABLE="your_table"
+export DATA_SOURCE_MODE="auto"
+export CITY_MATCH_MODE="contains"
+export BIGQUERY_DATE_COLUMNS="2024-01-31,2024-02-29,2024-03-31,2025-01-31,2025-02-28"
+export CACHE_TTL_SECONDS="600"
 ```
 ⸻
+
+
+## Deployment and Security Guide
+
+For production deployment patterns (Cloud Run, IAM scoping, cache strategy, and source-selection decision matrix), see [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## Key Technical Challenges and Solutions
 
