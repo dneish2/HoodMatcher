@@ -1,4 +1,5 @@
 streamlit
+pydeck
 openai
 pandas
 matplotlib
@@ -9,4 +10,5 @@ numpy
 faiss-cpu
 google-cloud-aiplatform
 google-cloud-bigquery
-
+google-cloud-storage
+pdfplumber
