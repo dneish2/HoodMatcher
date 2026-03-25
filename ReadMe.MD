@@ -114,13 +114,34 @@ Here’s a short walkthrough of the full app experience:
 
 ## Installation
 
-Option 1: Run Locally (Python + Streamlit)
+Option 1: Run Locally with `uv` (recommended)
 
+```bash
+# Clone the repo
+git clone https://github.com/dneish2/HoodMatcher.git
+cd HoodMatcher
+
+# Create and sync a virtual environment from pyproject.toml
+uv sync
+
+# Set API keys
+export OPENAI_API_KEY="your-key"
+export GEMINI_API_KEY="your-key"  # optional, for image generation
+
+# Run the app
+uv run streamlit run NeighborhoodMatcher.py
+```
+
+Option 2: Run Locally with pip
+
+```bash
 # Clone the repo
 git clone https://github.com/dneish2/HoodMatcher.git
 cd HoodMatcher
 
 # Install dependencies
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 
 # Set API keys
@@ -128,24 +149,40 @@ export OPENAI_API_KEY="your-key"
 export GEMINI_API_KEY="your-key"  # optional, for image generation
 
 # Run the app
-streamlit run app.py
+streamlit run NeighborhoodMatcher.py
+```
 
-⸻
+Option 3: Run with Docker
 
-Option 2: Run with Docker
-
+```bash
 # Build the container
 docker build -t hood-matchmaker .
 
 # Run the app
-docker run -p 8501:8501 \
+docker run --rm -p 8501:8501 \
   -e OPENAI_API_KEY="your-key" \
   -e GEMINI_API_KEY="your-key" \
+  -e DATA_SOURCE_MODE="csv" \
   hood-matchmaker
+```
 
 Then open http://localhost:8501 in your browser.
 
-⸻
+> Note: the Streamlit entry point is `NeighborhoodMatcher.py` (not `app.py`).
+
+---
+
+### Quick smoke checks
+
+```bash
+# Validate Python files compile
+python -m py_compile NeighborhoodMatcher.py data_loader.py context_map.py
+
+# Start Streamlit in headless mode
+streamlit run NeighborhoodMatcher.py --server.headless true --server.port 8501
+```
+
+---
 
 Data Requirements
 

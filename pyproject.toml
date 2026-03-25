@@ -1,0 +1,25 @@
+[project]
+name = "hoodmatcher"
+version = "0.1.0"
+description = "Neighborhood Matchmaker Streamlit app"
+readme = "ReadMe.MD"
+requires-python = ">=3.10"
+dependencies = [
+  "streamlit",
+  "pydeck",
+  "openai",
+  "pandas",
+  "matplotlib",
+  "pillow",
+  "tenacity",
+  "python-dotenv",
+  "numpy",
+  "faiss-cpu",
+  "google-cloud-aiplatform",
+  "google-cloud-bigquery",
+  "google-cloud-storage",
+  "pdfplumber",
+]
+
+[tool.uv]
+package = false
